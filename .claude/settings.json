@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [ -n \"$(git status --porcelain 2>/dev/null)\" ] && git add -A && git commit -m \"auto commit: $(date '+%Y-%m-%d %H:%M:%S')\" >/dev/null 2>&1; true",
+            "timeout": 15,
+            "statusMessage": "Auto-committing changes..."
+          }
+        ]
+      }
+    ]
+  }
+}
