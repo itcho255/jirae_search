@@ -2,24 +2,26 @@ import tkinter as tk
 import time
 import json
 import os
+import ctypes
+from ctypes import wintypes
 
 
-TRANSPARENT_KEY = "#ab00ab"  # chroma-key color; must not be used anywhere in the drawing
+BACKGROUND = "#000000"
 
 POSITION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".clock_position.json")
 
-BEZEL_FILL = "#161616"
-BEZEL_EDGE = "#3d3d3d"
-BEZEL_HIGHLIGHT = "#2a2a2a"
+BEZEL_FILL = BACKGROUND
+BEZEL_EDGE = BACKGROUND
+BEZEL_HIGHLIGHT = BACKGROUND
 ACCENT = "#3b82f6"
-BUTTON_FILL = "#2e2e2e"
-BUTTON_EDGE = "#4a4a4a"
-POWER_LED = "#39ff14"
+BUTTON_FILL = BACKGROUND
+BUTTON_EDGE = BACKGROUND
+POWER_LED = BACKGROUND
 
-PANEL_BG = "#050505"
+PANEL_BG = BACKGROUND
 PANEL_BORDER = "#000000"
 LED_ON = "#3b82f6"
-LED_OFF = "#122544"
+LED_OFF = BACKGROUND
 
 # classic 7-segment layout: (a, b, c, d, e, f, g)
 #      a
@@ -58,21 +60,46 @@ def rounded_rect_points(x0, y0, x1, y1, r):
     ]
 
 
-class DigitalClock:
-    def __init__(self, width=150, height=62, padding=12):
-        self.width = width
-        self.height = height
-        self.padding = padding
+def get_monitor_bounds(monitor_number=2):
+    """Return (left, top, width, height) for the requested Windows monitor."""
+    user32 = ctypes.windll.user32
+    monitors = []
+    monitor_enum_proc = ctypes.WINFUNCTYPE(
+        ctypes.c_int,
+        wintypes.HMONITOR,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        wintypes.LPARAM,
+    )
 
+    def collect_monitor(handle, hdc, rect, data):
+        monitors.append((rect.contents.left, rect.contents.top,
+                         rect.contents.right, rect.contents.bottom))
+        return 1
+
+    callback = monitor_enum_proc(collect_monitor)
+    user32.EnumDisplayMonitors(None, None, callback, 0)
+    if not monitors:
+        raise RuntimeError("No display monitor was found")
+
+    left, top, right, bottom = monitors[min(monitor_number, len(monitors)) - 1]
+    return left, top, right - left, bottom - top
+
+
+class DigitalClock:
+    def __init__(self, padding=0):
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.config(bg=TRANSPARENT_KEY)
-        self.root.attributes("-transparentcolor", TRANSPARENT_KEY)
+        self.root.config(bg=BACKGROUND)
+
+        # Fill monitor 2 so the clock scales to that display's resolution.
+        self.monitor_left, self.monitor_top, self.width, self.height = get_monitor_bounds(2)
+        self.padding = padding
 
         self.canvas = tk.Canvas(
-            self.root, width=width, height=height,
-            bg=TRANSPARENT_KEY, highlightthickness=0, bd=0,
+            self.root, width=self.width, height=self.height,
+            bg=BACKGROUND, highlightthickness=0, bd=0,
         )
         self.canvas.pack()
 
@@ -104,19 +131,23 @@ class DigitalClock:
         )
 
         # LED screen
-        screen_x0, screen_y0 = w * 0.10, h * 0.17
-        screen_x1, screen_y1 = w * 0.90, h * 0.74
+        screen_x0, screen_y0 = w * 0.02, h * 0.17
+        screen_x1, screen_y1 = w * 0.98, h * 0.74
         c.create_polygon(
             rounded_rect_points(screen_x0, screen_y0, screen_x1, screen_y1, 5),
             smooth=True, fill=PANEL_BG, outline=PANEL_BORDER, width=1,
         )
         self._panel_cx = (screen_x0 + screen_x1) / 2
         self._panel_cy = (screen_y0 + screen_y1) / 2
-        self._digit_h = (screen_y1 - screen_y0) * 0.62
+        panel_width = screen_x1 - screen_x0
+        time_width_factor = 6 * 0.55 + 2 * 0.28 + 7 * 0.18
+        vertical_digit_h = (screen_y1 - screen_y0) * 0.62
+        horizontal_digit_h = panel_width / time_width_factor * 0.96
+        self._digit_h = min(vertical_digit_h, horizontal_digit_h)
 
         # bottom accent stripe
         c.create_polygon(
-            rounded_rect_points(w * 0.10, h * 0.83, w * 0.90, h * 0.89, 2),
+            rounded_rect_points(w * 0.02, h * 0.83, w * 0.98, h * 0.89, 2),
             smooth=True, fill=ACCENT, outline="",
         )
 
@@ -136,26 +167,33 @@ class DigitalClock:
         a, b, c_, d, e, f, g = segs
         c = self.canvas
         half = dh / 2
-        c.create_rectangle(x + seg_t * 0.5, y, x + dw - seg_t * 0.5, y + seg_t,
-                            fill=LED_ON if a else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x + seg_t * 0.5, y + half - seg_t / 2, x + dw - seg_t * 0.5, y + half + seg_t / 2,
-                            fill=LED_ON if g else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x + seg_t * 0.5, y + dh - seg_t, x + dw - seg_t * 0.5, y + dh,
-                            fill=LED_ON if d else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x, y + seg_t * 0.5, x + seg_t, y + half - seg_t * 0.5,
-                            fill=LED_ON if f else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x + dw - seg_t, y + seg_t * 0.5, x + dw, y + half - seg_t * 0.5,
-                            fill=LED_ON if b else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x, y + half + seg_t * 0.5, x + seg_t, y + dh - seg_t * 0.5,
-                            fill=LED_ON if e else LED_OFF, outline="", tags=tag)
-        c.create_rectangle(x + dw - seg_t, y + half + seg_t * 0.5, x + dw, y + dh - seg_t * 0.5,
-                            fill=LED_ON if c_ else LED_OFF, outline="", tags=tag)
+
+        def draw_segment(start, end, active):
+            c.create_line(
+                *start, *end, fill=LED_ON if active else LED_OFF,
+                width=seg_t, capstyle=tk.ROUND, tags=tag,
+            )
+
+        draw_segment((x + seg_t, y + seg_t / 2),
+                     (x + dw - seg_t, y + seg_t / 2), a)
+        draw_segment((x + seg_t, y + half),
+                     (x + dw - seg_t, y + half), g)
+        draw_segment((x + seg_t, y + dh - seg_t / 2),
+                     (x + dw - seg_t, y + dh - seg_t / 2), d)
+        draw_segment((x + seg_t / 2, y + seg_t),
+                     (x + seg_t / 2, y + half - seg_t), f)
+        draw_segment((x + dw - seg_t / 2, y + seg_t),
+                     (x + dw - seg_t / 2, y + half - seg_t), b)
+        draw_segment((x + seg_t / 2, y + half + seg_t),
+                     (x + seg_t / 2, y + dh - seg_t), e)
+        draw_segment((x + dw - seg_t / 2, y + half + seg_t),
+                     (x + dw - seg_t / 2, y + dh - seg_t), c_)
 
     def _render_display(self, time_str):
         self.canvas.delete("digits")
         dh = self._digit_h
         dw = dh * 0.55
-        seg_t = dh * 0.16
+        seg_t = dh * 0.12
         gap = dh * 0.18
         colon_w = dh * 0.28
 
@@ -200,17 +238,17 @@ class DigitalClock:
 
     def _restore_position(self):
         self.root.update_idletasks()
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
+        left = self.monitor_left
+        top = self.monitor_top
 
         pos = self._load_position()
         if pos is None:
-            x = sw - self.width - self.padding
-            y = self.padding
+            x = left + self.padding
+            y = top + self.padding
         else:
             x, y = pos
-            x = max(0, min(x, sw - self.width))
-            y = max(0, min(y, sh - self.height))
+            x = max(left, min(x, left + self.width - self.width))
+            y = max(top, min(y, top + self.height - self.height))
 
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
